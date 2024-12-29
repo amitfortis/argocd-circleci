@@ -1,0 +1,24 @@
+#exclude all
+*
+!*/
+.venv
+.idea
+react-calculator/
+
+#but file types
+!*.c
+!*.md
+!*.sh
+!*.h
+!*.py
+!*.html
+!*.css
+!*.tf
+!*.yaml
+#but specific file
+
+!.gitignore
+!.myfuncs
+!makefile
+!requirements.txt
+!Dockerfile
