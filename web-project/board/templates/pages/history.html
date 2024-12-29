@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block title %}Search History{% endblock title %}
+{% block content %}
+<div class="container">
+  <h1 class="text-center mb-4">Search History</h1>
+
+  {% if history_data %}
+    <div class="table-responsive">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Location</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in history_data %}
+            <tr>
+              <td>{{ item.location }}</td>
+              <td>
+                <a href="{{ url_for('pages.download_file', filename=item.file) }}" class="btn btn-sm">Download</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-center alert alert-info">No search history available.</p>
+  {% endif %}
+
+  <div class="text-center mt-4">
+    <a href="{{ url_for('pages.home') }}" class="btn">Back to Search</a>
+  </div>
+</div>
+{% endblock content %}

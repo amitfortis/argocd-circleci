@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% block title %}Weather Results{% endblock title %}
+{% block content %}
+<div class="container">
+  <h1 class="text-center mb-4">Weather Results</h1>
+  
+  <form method="post" onsubmit="event.preventDefault(); submitForm();" class="search-form">
+    <div class="form-group">
+      <label for="content">Search Weather By Location</label>
+      <textarea id="content" name="content" placeholder="Enter Location" rows="1">{{ request.form['content'] }}</textarea>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn">Submit</button>
+      <button type="button" class="btn" onclick="uploadToDynamoDB()">Upload</button>
+      <a href="{{ url_for('pages.history') }}" class="btn">History</a>
+    </div>
+  </form>
+
+  {% if days %}
+    <h2 class="text-center mb-4">Weather Data for {{ days[0].location }}</h2>
+    <div class="weather-grid">
+      {% for day in days %}
+        <div class="weather-card">
+          <h3>{{ day.date }}</h3>
+          <p>
+            Daytime Temperature: {{ '%.1f' % day.day_temperature if day.day_temperature != 'N/A' else 'N/A' }}°C<br>
+            Nighttime Temperature: {{ '%.1f' % day.night_temperature if day.night_temperature != 'N/A' else 'N/A' }}°C<br>
+            Daytime Humidity: {{ '%.1f' % day.day_humidity if day.day_humidity != 'N/A' else 'N/A' }}%<br>
+            Nighttime Humidity: {{ '%.1f' % day.night_humidity if day.night_humidity != 'N/A' else 'N/A' }}%
+          </p>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-center alert alert-info">No data available for the selected location.</p>
+  {% endif %}
+</div>
+
+<script>
+  function submitForm() {
+    document.querySelector('form').submit();
+  }
+
+  document.getElementById('content').addEventListener('keydown', function(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      submitForm();
+    }
+  });
+
+  function uploadToDynamoDB() {
+    const location = document.querySelector('h2').textContent.split(' for ')[1];
+    const weatherData = [];
+    document.querySelectorAll('.weather-card').forEach(card => {
+      const date = card.querySelector('h3').textContent.trim();
+      const temperatureElement = card.querySelector('p').innerHTML.split('<br>');
+      weatherData.push(...temperatureElement.map(line => {
+        const [label, value] = line.split(': ');
+        return `${date}:${label}:${value.replace('°C', '').replace('%', '')}`;
+      }));
+    });
+
+    fetch('/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ location: location, weatherData: weatherData }),
+    })
+    .then(response => response.json())
+    .then(data => {
+      alert(data.message);
+    })
+    .catch((error) => {
+      console.error('Error:', error);
+      alert('An error occurred while uploading.');
+    });
+  }
+</script>
+{% endblock content %}

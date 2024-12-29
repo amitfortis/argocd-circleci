@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Weather App Home{% endblock title %}
+{% block content %}
+<div class="container">
+  <h1 class="text-center mb-4">Weather App Home</h1>
+  
+  <form method="post" onsubmit="event.preventDefault(); submitForm();" class="search-form">
+    <div class="form-group">
+      <label for="content">Search Weather By Location</label>
+      <textarea id="content" name="content" placeholder="Enter Location" rows="1"></textarea>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn">Submit</button>
+      <a href="{{ url_for('pages.history') }}" class="btn">History</a>
+    </div>
+  </form>
+</div>
+
+<script>
+  function submitForm() {
+    document.querySelector('form').submit();
+  }
+  document.getElementById('content').addEventListener('keydown', function(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      submitForm();
+    }
+  });
+</script>
+{% endblock content %}
+
