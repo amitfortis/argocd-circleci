@@ -1,0 +1,244 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine.
+# See: https://circleci.com/docs/configuration-reference
+version: 2.1
+orbs:
+  slack: circleci/slack@5.1.1
+  aws-cli: circleci/aws-cli@5.1.1
+  aws-eks: circleci/aws-eks@2.2.0
+# Define a job to be invoked later in a workflow.
+# See: https://circleci.com/docs/jobs-steps/#jobs-overview & https://circleci.com/docs/configuration-reference/#jobs
+jobs:
+  build:
+    # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
+    # See: https://circleci.com/docs/executor-intro/ & https://circleci.com/docs/configuration-reference/#executor-job
+    docker:
+      # Specify the version you desire here
+      # See: https://circleci.com/developer/images/image/cimg/base
+      - image: cimg/base:current
+
+    # Add steps to the job
+    # See: https://circleci.com/docs/jobs-steps/#steps-overview & https://circleci.com/docs/configuration-reference/#steps
+    steps:
+      # Checkout the code as the first step.
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Tar Web Project
+          command: tar --exclude '*/__pycache__' -czvf docker/web-project.tar.gz web-project/
+      - run:
+          name: Build Docker Image
+          command: docker build -t ${GITLAB_IMAGE}:${CIRCLE_SHA1} docker/
+      - run:
+          name: Run Docker Container
+          command: docker run -d --name weather-app -p 5000:5000 registry.gitlab.com/amitfortis/weather-application:${CIRCLE_SHA1}
+      - run:
+          name: Test Container
+          command: |
+            CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' weather-app)
+            sleep 5
+            if ./scripts/connection_test.sh ${CONTAINER_IP}; then
+              echo 'export TEST_RESULT="success"' >> $BASH_ENV
+            else
+              echo 'export TEST_RESULT="failed"' >> $BASH_ENV
+            fi
+
+      - slack/notify:
+          channel: "#devops-alerts"
+          event: always
+          custom: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "plain_text",
+                      "text": "Weather Application results for build number $CIRCLE_BUILD_NUM",
+                      "emoji": true
+                    },
+                    {
+                      "type": "plain_text",
+                      "text": "results: $TEST_RESULT",
+                      "emoji": true 
+                    }
+                  ]
+                }
+              ]
+            }
+
+      - run:
+          name: Login to Gitlab
+          command: echo "$GITLAB_TOKEN" | docker login registry.gitlab.com --username "$GITLAB_USERNAME" --password-stdin
+      - run:
+          name: Push to Gitlab
+          command: docker push registry.gitlab.com/amitfortis/weather-application:${CIRCLE_SHA1}
+
+  checkov:
+    docker:
+      - image: cimg/python:3.11
+
+    steps:
+      - checkout
+
+      - run:
+          name: Install Checkov
+          command: |
+            python -m pip install --upgrade pip 
+            pip install checkov
+      - run:
+          name: Run Checkov Scan
+          command: |
+            checkov --skip-check CKV_TF_1 -d terraform_eks/ --quiet
+  terratest:
+    docker:
+      - image: cimg/go:1.23.3
+
+    steps:
+      - checkout
+      - aws-cli/setup
+
+      - run:
+          name: Install terraform
+          command: |
+            sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
+            wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+            gpg --no-default-keyring --keyring /usr/share/keyrings/hashicorp-archive-keyring.gpg --fingerprint
+            echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt update
+            sudo apt-get install terraform
+
+      - run:
+          name: Terratest
+          command: |
+            cd terraform_eks/test
+            go mod init test 
+            go mod tidy 
+            go test -v -timeout 30m
+
+  eks_cluster:
+    docker:
+      - image: cimg/deploy:2024.11.1
+
+    steps:
+      - checkout
+      - aws-cli/setup
+
+      - run:
+          name: Apply Terraform - VPC+EKS
+          command: |
+            cd terraform_eks
+            terraform init 
+            terraform validate
+            terraform import 'module.vpc.aws_cloudwatch_log_group.flow_logs' '/aws/vpc-flow-logs/terraform-eks-vpc' || true
+            terraform apply -auto-approve
+
+  argocd:
+    docker:
+      - image: cimg/base:2024.11
+
+    steps:
+      - checkout
+      - aws-cli/setup
+      - aws-eks/setup
+
+      - run:
+          name: Install Kubectl
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+            curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg 
+            sudo chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+            echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list 
+            sudo chmod 644 /etc/apt/sources.list.d/kubernetes.list
+            sudo apt-get update
+            sudo apt-get install -y kubectl
+
+      - run:
+          name: Update Kubeconfig
+          command: |
+            echo 'export CLUSTER_NAME=$(aws eks list-clusters --query "clusters[0]" --output text)' >> "$BASH_ENV"
+            source "$BASH_ENV"
+            aws eks update-kubeconfig --region $AWS_DEFAULT_REGION --name $CLUSTER_NAME
+
+      - run:
+          name: Install Argocd
+          command: |
+            kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+            kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+            kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "LoadBalancer"}}'
+
+      - run:
+          name: Install Argocd CLI
+          command: |
+            curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+            sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd 
+            rm argocd-linux-amd64
+
+      - run:
+          name: Install Helm
+          command: |
+            curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+            sudo apt-get install apt-transport-https --yes
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+            sudo apt-get update
+            sudo apt-get install helm
+
+      - run:
+          name: Install Nginx Ingress Controller
+          command: |
+            helm upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --namespace ingress-nginx --create-namespace
+
+      - run:
+          name: Login and setup argo
+          command: |
+            sleep 60
+            ARGO_SERVER=$(kubectl get svc argocd-server -n argocd -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+            INITIAL_ADMIN_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+            argocd login $ARGO_SERVER --username admin --password $INITIAL_ADMIN_PASSWORD --insecure
+
+      - run:
+          name: Connect Cluster and repo to argocd
+          command: |
+            CONTEXT_NAME=$(kubectl config current-context)
+            argocd cluster add $CONTEXT_NAME --yes
+            argocd repo add $GIT_REPO_URL --username $GITLAB_USERNAME --password $GITLAB_TOKEN --upsert
+
+      - run:
+          name: Login to Gitlab container registry
+          command: |
+            echo "$GITLAB_TOKEN" | docker login registry.gitlab.com --username "$GITLAB_USERNAME" --password-stdin
+            kubectl create secret generic regcred --from-file=.dockerconfigjson=$HOME/.docker/config.json --type=kubernetes.io/dockerconfigjson --namespace default
+
+      - run:
+          name: Create ArgoCD Application
+          command: |
+            argocd app create myapp --repo ${GIT_REPO_URL} --path myapp --dest-server https://kubernetes.default.svc --dest-namespace default --sync-policy automated --auto-prune --self-heal --project default --helm-set image.repository=${GITLAB_IMAGE} --helm-set image.tag=${CIRCLE_SHA1} --upsert 
+            argocd app sync myapp --timeout 120
+            argocd app wait myapp --timeout 120
+
+      - run:
+          name: Install Kube-Monkey
+          command:
+            helm repo add kubemonkey https://asobti.github.io/kube-monkey/charts/repo
+            helm repo update
+            helm install --name my-release kubemonkey \
+            --set config.dryRun=false \
+            --set config.whitelistedNamespaces="{default}"
+            --set config.runHour=10 \
+            --set config.startHour=11 \
+            --set config.endHour=17
+
+workflows:
+  build-and-notify:
+    jobs:
+      - build
+      - checkov
+      - terratest
+      - eks_cluster:
+          requires:
+            - terratest
+            - checkov
+      - argocd:
+          requires:
+            - eks_cluster
+            - build
