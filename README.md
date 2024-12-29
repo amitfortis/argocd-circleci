@@ -39,26 +39,6 @@ A complete CI/CD pipeline project deploying a weather application to Amazon EKS 
 - Docker container builds
 - Automated testing and deployment
 
-## Quick Start
-
-1. Infrastructure Setup:
-```bash
-cd terraform_eks
-terraform init
-terraform apply
-```
-
-2. Build Application:
-```bash
-cd docker
-docker build -t weather-app .
-```
-
-3. Deploy with Helm:
-```bash
-cd myapp
-helm install weather-app .
-```
 
 ## Scripts
 
@@ -76,11 +56,5 @@ helm install weather-app .
 - CircleCI CLI (optional)
 - ArgoCD CLI (optional)
 
-## Infrastructure Testing
-
-```bash
-cd terraform_eks/test
-go test -v
-```
 
 
