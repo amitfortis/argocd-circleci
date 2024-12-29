@@ -62,8 +62,8 @@ helm install weather-app .
 
 ## Scripts
 
-- `connection_test.sh`: Verify cluster connectivity
-- `delete_cluster.sh`: Clean up resources
+- `connection_test.sh`: Smoke connectivity test
+- `delete_cluster.sh`: Clean up cluster
 - `rebuild.sh`: Rebuild application and containers
 
 ## Requirements
@@ -83,14 +83,4 @@ cd terraform_eks/test
 go test -v
 ```
 
-## Contributing
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-[Specify License]
